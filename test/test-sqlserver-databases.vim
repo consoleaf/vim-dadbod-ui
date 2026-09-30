@@ -6,12 +6,6 @@ function! s:suite.before() abort
   let $PATH = s:bin . ':' . $PATH
 endfunction
 
-" Each test starts from a clean drawer/connection state.
-function! s:begin(...) abort
-  call Cleanup()
-  call s:setup_dbs(get(a:, 1, 'sqlserver://sa:pass@localhost:1433'))
-endfunction
-
 function! s:suite.after() abort
   call Cleanup()
 endfunction
@@ -21,6 +15,22 @@ function! s:setup_dbs(url) abort
   let g:dbs = [{'name': 'sqlserver_test', 'url': a:url}]
 endfunction
 
+" Each test starts from a clean drawer/connection state.
+function! s:begin(...) abort
+  call Cleanup()
+  call s:setup_dbs(get(a:, 1, 'sqlserver://sa:pass@localhost:1433'))
+endfunction
+
+" Mock instance enumerates: master (system), OtherDb, BadDb (unreadable).
+" Tree after expanding the connection and Databases:
+"   1 ▾ sqlserver_test ✓
+"   2   + New query
+"   3   ▸ Saved queries (0)
+"   4   ▾ Databases (2)
+"   5     ▸ OtherDb
+"   6     ▸ BadDb
+"   7     ▸ System Databases (1)
+
 function! s:suite.should_show_databases_section_on_connection_expand() abort
   call s:begin()
   :DBUI
@@ -29,36 +39,56 @@ function! s:suite.should_show_databases_section_on_connection_expand() abort
         \ '▾ sqlserver_test ✓',
         \ '  + New query',
         \ '  ▸ Saved queries (0)',
-        \ '  ▸ Databases (3)',
+        \ '  ▸ Databases (2)',
         \ ])
 endfunction
 
-function! s:suite.should_list_databases_with_current_marked() abort
+function! s:suite.should_group_system_databases_in_folder() abort
   call s:begin()
   :DBUI
   normal o
-  " Expand Databases (3)
   call cursor(4, 1)
   normal o
   call s:expect(getline(4, '$')).to_equal([
-        \ '  ▾ Databases (3)',
-        \ '    ▸ master *',
+        \ '  ▾ Databases (2)',
         \ '    ▸ OtherDb',
         \ '    ▸ BadDb',
+        \ '    ▸ System Databases (1)',
+        \ ])
+  " Expand the folder: master is inside and marked as the login default.
+  call cursor(7, 1)
+  normal o
+  call s:expect(getline(7, '$')).to_equal([
+        \ '    ▾ System Databases (1)',
+        \ '      ▸ master *',
+        \ ])
+  " Expanding master works like any other database (lazy introspection).
+  call cursor(8, 1)
+  normal o
+  call s:expect(getline(8, '$')).to_equal([
+        \ '      ▾ master *',
+        \ '        ▸ dbo (2)',
+        \ ])
+  call cursor(9, 1)
+  normal o
+  call s:expect(getline(9, '$')).to_equal([
+        \ '        ▾ dbo (2)',
+        \ '          ▸ orders',
+        \ '          ▸ users',
         \ ])
 endfunction
 
-function! s:suite.should_mark_url_database_when_set() abort
+function! s:suite.should_list_user_databases_with_url_database_marked() abort
   call s:begin('sqlserver://sa:pass@localhost:1433/OtherDb')
   :DBUI
   normal o
   call cursor(4, 1)
   normal o
   call s:expect(getline(4, '$')).to_equal([
-        \ '  ▾ Databases (3)',
-        \ '    ▸ master',
+        \ '  ▾ Databases (2)',
         \ '    ▸ OtherDb *',
         \ '    ▸ BadDb',
+        \ '    ▸ System Databases (1)',
         \ ])
 endfunction
 
@@ -68,22 +98,24 @@ function! s:suite.should_lazily_expand_database_to_schemas_and_tables() abort
   normal o
   call cursor(4, 1)
   normal o
-  " Expand OtherDb (line 6)
-  call cursor(6, 1)
+  " Expand OtherDb (line 5)
+  call cursor(5, 1)
   normal o
-  call s:expect(getline(6, '$')).to_equal([
+  call s:expect(getline(5, '$')).to_equal([
         \ '    ▾ OtherDb',
         \ '      ▸ dbo (1)',
         \ '    ▸ BadDb',
+        \ '    ▸ System Databases (1)',
         \ ])
   " Expand schema dbo
-  call cursor(7, 1)
+  call cursor(6, 1)
   normal o
-  call s:expect(getline(6, '$')).to_equal([
+  call s:expect(getline(5, '$')).to_equal([
         \ '    ▾ OtherDb',
         \ '      ▾ dbo (1)',
         \ '        ▸ projects',
         \ '    ▸ BadDb',
+        \ '    ▸ System Databases (1)',
         \ ])
 endfunction
 
@@ -94,12 +126,13 @@ function! s:suite.should_show_error_hint_for_unreadable_database() abort
   call cursor(4, 1)
   normal o
   " Expand BadDb, whose introspection fails
-  call cursor(7, 1)
+  call cursor(6, 1)
   normal o
-  call s:expect(getline(6, '$')).to_equal([
+  call s:expect(getline(5, '$')).to_equal([
         \ '    ▸ OtherDb',
         \ '    ▾ BadDb ✕',
         \ '      (DB exec error (exit 1))',
+        \ '    ▸ System Databases (1)',
         \ ])
 endfunction
 
@@ -110,20 +143,43 @@ function! s:suite.should_open_query_buffer_targeting_database() abort
   call cursor(4, 1)
   normal o
   " Expand OtherDb and its schema
+  call cursor(5, 1)
+  normal o
   call cursor(6, 1)
   normal o
+  " Expand table projects, then open the List helper on it
   call cursor(7, 1)
   normal o
-  " Expand table projects, then open the List helper on it
   call cursor(8, 1)
-  normal o
-  call cursor(9, 1)
   normal o
   call s:expect(getbufvar(bufnr(''), 'dbui_database_name')).to_equal('OtherDb')
   call s:expect(getbufvar(bufnr(''), 'db')).to_equal('sqlserver://sa:pass@localhost:1433/OtherDb')
   call s:expect(getline(1, '$')).to_equal(['select top 200 * from [OtherDb].dbo.[projects]'])
   let statusline = db_ui#statusline({'prefix': '', 'show': ['db_name', 'database', 'table']})
   call s:expect(statusline).to_equal('sqlserver_test -> OtherDb -> projects')
+endfunction
+
+function! s:suite.should_open_query_buffer_targeting_system_database() abort
+  call s:begin()
+  :DBUI
+  normal o
+  call cursor(4, 1)
+  normal o
+  " Expand System Databases, master, and dbo
+  call cursor(7, 1)
+  normal o
+  call cursor(8, 1)
+  normal o
+  call cursor(9, 1)
+  normal o
+  " Open the List helper on orders under master (tables sort alphabetically)
+  call cursor(10, 1)
+  normal o
+  call cursor(11, 1)
+  normal o
+  call s:expect(getbufvar(bufnr(''), 'dbui_database_name')).to_equal('master')
+  call s:expect(getbufvar(bufnr(''), 'db')).to_equal('sqlserver://sa:pass@localhost:1433/master')
+  call s:expect(getline(1, '$')).to_equal(['select top 200 * from [master].dbo.[orders]'])
 endfunction
 
 function! s:suite.should_fall_back_to_schemas_when_adapter_lacks_databases() abort

@@ -322,9 +322,22 @@ instance as an extra level in the drawer:
   ▸ Databases (4)
 ```
 
-Expanding a database lists its schemas and tables. The database the connection
-URL itself points at is marked with `*`; if the URL has no database segment,
-the server reports the login's default database, which is marked instead.
+```
+  ▸ Databases (2)
+    ▸ OtherDb
+    ▸ SecondDb *
+    ▸ System Databases (4)
+      ▸ master
+      ▸ model
+      ▸ msdb
+      ▸ tempdb
+```
+
+`master`, `model`, `msdb` and `tempdb` are grouped into a `System Databases`
+folder, like SSMS and Azure Data Studio. Expanding any database lists its
+schemas and tables. The database the connection URL itself points at is marked
+with `*`; if the URL has no database segment, the server reports the login's
+default database, which is marked instead.
 Per-database introspection runs lazily (on first expansion) and reuses the
 existing connection with three-part names (`[OtherDb].INFORMATION_SCHEMA.TABLES`),
 so no extra connections are opened. Opening a table under a database opens a

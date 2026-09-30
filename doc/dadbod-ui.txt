@@ -962,6 +962,10 @@ server as a level above schemas: ~
 
 		connection -> Databases -> [database *] -> schemas -> tables
 
+		* `master`, `model`, `msdb` and `tempdb` are grouped into a
+		  `System Databases (4)` folder below the user databases, like
+		  SSMS and Azure Data Studio. System databases expand and query
+		  exactly like user databases.
 		* The database the connection URL points at is marked with `*`
 		  (or the login's default database when the URL has no database
 		  segment).

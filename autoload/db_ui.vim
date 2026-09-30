@@ -251,7 +251,7 @@ function! s:dbui.generate_new_db_entry(db) abort
         \ 'expanded': 0,
         \ 'tables': {'expanded': 0 , 'items': {}, 'list': [] },
         \ 'schemas': {'expanded': 0, 'items': {}, 'list': [] },
-        \ 'databases': {'expanded': 0, 'items': {}, 'list': [] },
+        \ 'databases': {'expanded': 0, 'system': {'expanded': 0}, 'items': {}, 'list': [] },
         \ 'database_support': 0,
         \ 'current_database': '',
         \ 'saved_queries': { 'expanded': 0, 'list': [] },

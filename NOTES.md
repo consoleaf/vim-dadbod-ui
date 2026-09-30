@@ -116,12 +116,23 @@ to the `schema` icon in `get_toggle_icon()`, so users with custom partial
 
 ## Verification summary
 
-* 8 new themis tests (`test/test-sqlserver-databases.vim`) with a mock sqlcmd:
+* 9 new themis tests (`test/test-sqlserver-databases.vim`) with a mock sqlcmd:
   section rendering, current-db marking (with and without URL segment), lazy
   schema/table expansion, error hint, query-buffer targeting + content,
   old-dadbod fallback, capability gating for other schemes.
 * Full suite: 63/63 in Vim 9.1 **and** Neovim 0.9.5 (zero regression).
 * Real SQL Server 2022 smoke test in Docker: see the report.
+
+## System databases grouping
+
+`master`, `model`, `msdb` and `tempdb` render under a collapsible
+`System Databases (N)` folder after the user databases, mirroring SSMS /
+Azure Data Studio. The grouping is presentation-only: the folder state lives
+in `db.databases.system.expanded`, database nodes keep their normal
+`databases->items->{name}` paths, so lazy loading, error hints, the current
+marker and query targeting behave identically inside the folder. The
+`Databases (N)` header counts user databases only. No configuration flag:
+the four-name set matches SSMS's fixed notion of system databases.
 
 ## Known gaps / future work
 

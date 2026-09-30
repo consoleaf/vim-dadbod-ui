@@ -1,6 +1,14 @@
 let s:drawer_instance = {}
 let s:drawer = {}
 
+" Databases SQL Server groups into a "System Databases" folder,
+" like SSMS and Azure Data Studio do.
+let s:system_databases = ['master', 'model', 'msdb', 'tempdb']
+
+function! s:is_system_database(name) abort
+  return index(s:system_databases, a:name) >= 0
+endfunction
+
 function db_ui#drawer#new(dbui)
   let s:drawer_instance = s:drawer.new(a:dbui)
   return s:drawer_instance
@@ -844,33 +852,47 @@ function! s:drawer._render_schemas_section(db) abort
 endfunction
 
 function! s:drawer._render_databases_section(db) abort
-  call self.add('Databases ('.len(a:db.databases.items).')', 'toggle', 'databases', self.get_toggle_icon('schemas', a:db.databases), a:db.key_name, 1, { 'expanded': a:db.databases.expanded })
+  let user_databases = filter(copy(a:db.databases.list), {_, v -> !s:is_system_database(v)})
+  let system_databases = filter(copy(a:db.databases.list), {_, v -> s:is_system_database(v)})
+  call self.add('Databases ('.len(user_databases).')', 'toggle', 'databases', self.get_toggle_icon('schemas', a:db.databases), a:db.key_name, 1, { 'expanded': a:db.databases.expanded })
   if !a:db.databases.expanded
     return
   endif
-  for database in a:db.databases.list
-    let item = a:db.databases.items[database]
-    let label = database . (item.current ? ' *' : '')
-    if !empty(item.error)
-      let label .= ' '.g:db_ui_icons.connection_error
-    endif
-    call self.add(label, 'toggle', 'databases->items->'.database, self.get_toggle_icon('database', item), a:db.key_name, 2, { 'expanded': item.expanded, 'database': database })
-    if !item.expanded
-      continue
-    endif
-    if !empty(item.error)
-      call self.add('('.item.error.')', 'noaction', 'database_error', '', a:db.key_name, 3)
-    elseif item.loaded
-      for schema in item.schemas.list
-        let schema_item = item.schemas.items[schema]
-        let tables = schema_item.tables
-        call self.add(schema.' ('.len(tables.items).')', 'toggle', 'databases->items->'.database.'->schemas->items->'.schema, self.get_toggle_icon('schema', schema_item), a:db.key_name, 3, { 'expanded': schema_item.expanded, 'database': database })
-        if schema_item.expanded
-          call self.render_tables(tables, a:db, 'databases->items->'.database.'->schemas->items->'.schema.'->tables->items', 4, schema, { 'database': database })
-        endif
+  for database in user_databases
+    call self._render_database_node(a:db, database, 2)
+  endfor
+  if !empty(system_databases)
+    call self.add('System Databases ('.len(system_databases).')', 'toggle', 'databases->system', self.get_toggle_icon('schemas', a:db.databases.system), a:db.key_name, 2, { 'expanded': a:db.databases.system.expanded })
+    if a:db.databases.system.expanded
+      for database in system_databases
+        call self._render_database_node(a:db, database, 3)
       endfor
     endif
-  endfor
+  endif
+endfunction
+
+function! s:drawer._render_database_node(db, database, level) abort
+  let item = a:db.databases.items[a:database]
+  let label = a:database . (item.current ? ' *' : '')
+  if !empty(item.error)
+    let label .= ' '.g:db_ui_icons.connection_error
+  endif
+  call self.add(label, 'toggle', 'databases->items->'.a:database, self.get_toggle_icon('database', item), a:db.key_name, a:level, { 'expanded': item.expanded, 'database': a:database })
+  if !item.expanded
+    return
+  endif
+  if !empty(item.error)
+    call self.add('('.item.error.')', 'noaction', 'database_error', '', a:db.key_name, a:level + 1)
+  elseif item.loaded
+    for schema in item.schemas.list
+      let schema_item = item.schemas.items[schema]
+      let tables = schema_item.tables
+      call self.add(schema.' ('.len(tables.items).')', 'toggle', 'databases->items->'.a:database.'->schemas->items->'.schema, self.get_toggle_icon('schema', schema_item), a:db.key_name, a:level + 1, { 'expanded': schema_item.expanded, 'database': a:database })
+      if schema_item.expanded
+        call self.render_tables(tables, a:db, 'databases->items->'.a:database.'->schemas->items->'.schema.'->tables->items', a:level + 2, schema, { 'database': a:database })
+      endif
+    endfor
+  endif
 endfunction
 
 function! s:drawer._is_schema_ignored(schema_name)
