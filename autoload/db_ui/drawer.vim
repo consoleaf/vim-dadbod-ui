@@ -699,6 +699,18 @@ function! s:drawer.populate_databases(db) abort
   catch /.*/
     let databases = []
   endtry
+  let a:db.databases.error = ''
+  if empty(databases)
+    " An instance always has at least master and tempdb online, so an empty
+    " result means the query itself failed (db#systemlist swallows the exit
+    " status). Re-run it with error capture so the drawer can show why.
+    let scheme = db_ui#schemas#get(a:db.scheme)
+    let [_, error] = db_ui#schemas#query_with_error(a:db, scheme,
+          \ "SET NOCOUNT ON; SELECT name FROM sys.databases WHERE state_desc = 'ONLINE' ORDER BY name")
+    if !empty(error)
+      let a:db.databases.error = error
+    endif
+  endif
   let a:db.databases.list = filter(copy(databases), '!empty(v:val)')
 
   let current = substitute(get(db#url#parse(a:db.conn), 'path', ''), '^/', '', '')
@@ -854,9 +866,16 @@ endfunction
 function! s:drawer._render_databases_section(db) abort
   let user_databases = filter(copy(a:db.databases.list), {_, v -> !s:is_system_database(v)})
   let system_databases = filter(copy(a:db.databases.list), {_, v -> s:is_system_database(v)})
-  call self.add('Databases ('.len(user_databases).')', 'toggle', 'databases', self.get_toggle_icon('schemas', a:db.databases), a:db.key_name, 1, { 'expanded': a:db.databases.expanded })
+  let label = 'Databases ('.len(user_databases).')'
+  if !empty(get(a:db.databases, 'error', ''))
+    let label .= ' '.g:db_ui_icons.connection_error
+  endif
+  call self.add(label, 'toggle', 'databases', self.get_toggle_icon('schemas', a:db.databases), a:db.key_name, 1, { 'expanded': a:db.databases.expanded })
   if !a:db.databases.expanded
     return
+  endif
+  if !empty(get(a:db.databases, 'error', ''))
+    call self.add('('.a:db.databases.error.')', 'noaction', 'database_error', '', a:db.key_name, 2)
   endif
   for database in user_databases
     call self._render_database_node(a:db, database, 2)

@@ -95,6 +95,12 @@ empty line via its callback; `query_with_error` mimics that so both paths see
 the same line shape and the sqlserver parser (`results[0:-3]`) behaves
 identically.
 
+Database *enumeration* failures are also swallowed by `db#systemlist` (empty
+list). Since an instance always has at least `master` and `tempdb` online, an
+empty enumeration is treated as a failure: the drawer marks the `Databases`
+node with the connection-error icon and shows the captured error on expansion
+(TLS problems, unavailable login default database, etc.).
+
 ## Tree state & rendering
 
 `db.databases = {expanded, list, items: {name: {expanded, loaded, error,

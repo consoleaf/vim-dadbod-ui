@@ -10,6 +10,7 @@ INPUT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -S|-U|-P|-d|-Q|-i|-s) OPT="$1"; shift; case "$OPT" in
+      -S) SERVER="$1" ;;
       -d) DB="$1" ;;
       -Q) QUERY="$1" ;;
       -i) INPUT="$1" ;;
@@ -26,6 +27,13 @@ fi
 case "$QUERY" in
   *"FROM sys.databases"*)
     # Adapter database enumeration (runs with SET NOCOUNT ON).
+    # Server "broken" simulates a failed query (TLS / default-db problems):
+    # the connect probe passes, but enumeration exits nonzero.
+    case "$SERVER" in broken*) BROKEN=1;; esac
+    if [ "$BROKEN" = "1" ]; then
+      printf 'Sqlcmd: Error: connection failed\n' >&2
+      exit 1
+    fi
     printf 'master\nOtherDb\nBadDb\n'
     exit 0
     ;;

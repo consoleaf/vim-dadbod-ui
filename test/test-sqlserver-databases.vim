@@ -182,6 +182,25 @@ function! s:suite.should_open_query_buffer_targeting_system_database() abort
   call s:expect(getline(1, '$')).to_equal(['select top 200 * from [master].dbo.[orders]'])
 endfunction
 
+function! s:suite.should_show_error_when_enumeration_fails() abort
+  " Mock server "broken": connect succeeds, enumeration query fails.
+  call s:begin('sqlserver://sa:pass@broken:1433')
+  :DBUI
+  normal o
+  call s:expect(getline(1, '$')).to_equal([
+        \ '▾ sqlserver_test ✓',
+        \ '  + New query',
+        \ '  ▸ Saved queries (0)',
+        \ '  ▸ Databases (0) ✕',
+        \ ])
+  call cursor(4, 1)
+  normal o
+  call s:expect(getline(4, '$')).to_equal([
+        \ '  ▾ Databases (0) ✕',
+        \ '    (DB exec error (exit 1))',
+        \ ])
+endfunction
+
 function! s:suite.should_fall_back_to_schemas_when_adapter_lacks_databases() abort
   " Simulate an older vim-dadbod without the databases() capability.
   silent! delfunction db#adapter#sqlserver#databases
