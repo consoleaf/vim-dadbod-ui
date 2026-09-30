@@ -1,0 +1,76 @@
+#!/bin/sh
+# Mock sqlcmd used by test/test-sqlserver-databases.vim.
+# Emulates the subset of sqlcmd behavior vim-dadbod and vim-dadbod-ui rely on:
+#   - parses -S/-U/-P/-d/-Q/-i/-s/-h-1/-W/-N/-C/-E flags
+#   - answers database enumeration, DB_NAME(), INFORMATION_SCHEMA queries
+#   - "BadDb" simulates a database the login cannot introspect (exit 1)
+DB=""
+QUERY=""
+INPUT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -S|-U|-P|-d|-Q|-i|-s) OPT="$1"; shift; case "$OPT" in
+      -d) DB="$1" ;;
+      -Q) QUERY="$1" ;;
+      -i) INPUT="$1" ;;
+    esac ;;
+  esac
+  shift
+done
+
+# Auth probe / execution via stdin file: reply nothing.
+if [ -z "$QUERY" ] && [ -n "$INPUT" ]; then
+  exit 0
+fi
+
+case "$QUERY" in
+  *"FROM sys.databases"*)
+    # Adapter database enumeration (runs with SET NOCOUNT ON).
+    printf 'master\nOtherDb\nBadDb\n'
+    exit 0
+    ;;
+  *"DB_NAME()"*)
+    if [ -n "$DB" ]; then printf '%s\n\n(1 rows affected)\n' "$DB"; else printf 'master\n\n(1 rows affected)\n'; fi
+    exit 0
+    ;;
+  *INFORMATION_SCHEMA.SCHEMATA*|*information_schema.schemata*)
+    DBNAME=$(printf '%s' "$QUERY" | sed -n 's/.*\[\([^]]*\)\]\.[Ii][Nn][Ff][Oo][Rr][Mm][Aa][Tt][Ii][Oo][Nn]_[Ss][Cc][Hh][Ee][Mm][Aa].*/\1/p')
+    if [ -z "$DBNAME" ]; then DBNAME="$DB"; fi
+    if [ -z "$DBNAME" ]; then DBNAME="master"; fi
+    if [ "$DBNAME" = "BadDb" ]; then
+      printf 'Msg 916, Level 14, State 1, Server mock, Line 1\nServer principal is not able to access the database under the current security context.\n' >&2
+      exit 1
+    fi
+    printf 'dbo\n\n(1 rows affected)\n'
+    exit 0
+    ;;
+  *INFORMATION_SCHEMA.TABLES*|*information_schema.tables*)
+    DBNAME=$(printf '%s' "$QUERY" | sed -n 's/.*\[\([^]]*\)\]\.[Ii][Nn][Ff][Oo][Rr][Mm][Aa][Tt][Ii][Oo][Nn]_[Ss][Cc][Hh][Ee][Mm][Aa].*/\1/p')
+    if [ -z "$DBNAME" ]; then DBNAME="$DB"; fi
+    if [ -z "$DBNAME" ]; then DBNAME="master"; fi
+    case "$DBNAME" in
+      BadDb)
+        printf 'Msg 916, Level 14, State 1, Server mock, Line 1\nServer principal is not able to access the database under the current security context.\n' >&2
+        exit 1
+        ;;
+      master)
+        printf 'dbo|users\ndbo|orders\n\n(2 rows affected)\n'
+        ;;
+      OtherDb)
+        printf 'dbo|projects\n\n(1 rows affected)\n'
+        ;;
+      *)
+        printf '\n(0 rows affected)\n'
+        ;;
+    esac
+    exit 0
+    ;;
+  *"information_schema.tables"*)
+    # Adapter tables() against the URL database (old single-database behavior).
+    printf 'users\norders\n'
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
