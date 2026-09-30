@@ -949,6 +949,35 @@ db_ui#statusline({opts})
 		  \ 'prefix': ''
 		  \ })
 <
+		When a query buffer is opened from a SQL Server database subtree (see
+		|vim-dadbod-ui-sqlserver-databases|), the `database` token is also
+		available in `show` to display the target database.
+
+==============================================================================
+11. SQL Server database tree		  *vim-dadbod-ui-sqlserver-databases*
+
+For `sqlserver://` connections, when the installed vim-dadbod adapter supports
+the `databases()` capability, the drawer shows all online databases on the
+server as a level above schemas: ~
+
+		connection -> Databases -> [database *] -> schemas -> tables
+
+		* The database the connection URL points at is marked with `*`
+		  (or the login's default database when the URL has no database
+		  segment).
+		* Database enumeration runs once, when the connection node is
+		  first expanded. Each database is introspected lazily on first
+		  expansion, using three-part names against the existing
+		  connection (`[Db].INFORMATION_SCHEMA.TABLES`).
+		* Query buffers opened from a database subtree target that
+		  database (`b:dbui_database_name` is set, `{optional_schema}`
+		  helpers are prefixed with the bracket-quoted database).
+		* Databases that cannot be introspected (for example due to
+		  permissions) show an error hint instead of tables; the rest of
+		  the tree is unaffected.
+		* With an older vim-dadbod that lacks the capability, the drawer
+		  renders the previous single-database schema tree. Other
+		  adapters are not affected.
 
 					      *db_ui#query()*
 db_ui#query({query})
@@ -1006,7 +1035,7 @@ DBUIOpened
 		`autocmd User DBUIOpened let b:dotenv = DotenvRead('.envrc') | norm R`
 
 ==============================================================================
-11. Highlights					*vim-dadbod-ui-highlights*
+12. Highlights					*vim-dadbod-ui-highlights*
 
 To customize the colors of the notifications, add these custom hl groups:
 * `NotificationInfo`
