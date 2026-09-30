@@ -78,6 +78,9 @@ let s:sqlserver = {
       \   'foreign_key_query': trim(s:sqlserver_foreign_keys_query),
       \   'schemes_query': 'SELECT schema_name FROM INFORMATION_SCHEMA.SCHEMATA',
       \   'schemes_tables_query': 'SELECT table_schema, table_name FROM INFORMATION_SCHEMA.TABLES',
+      \   'database_schemas_query': 'SELECT schema_name FROM %s.INFORMATION_SCHEMA.SCHEMATA',
+      \   'database_tables_query': 'SELECT table_schema, table_name FROM %s.INFORMATION_SCHEMA.TABLES',
+      \   'database_current_query': 'SELECT DB_NAME()',
       \   'select_foreign_key_query': 'select * from %s.%s where %s = %s',
       \   'cell_line_number': 2,
       \   'cell_line_pattern': '^-\+.-\+',
@@ -271,6 +274,34 @@ function! db_ui#schemas#query(db, scheme, query) abort
   return map(result, {_, val -> substitute(val, "\r$", "", "")})
 endfunction
 
+" Like db_ui#schemas#query, but surfaces execution failures instead of
+" silently returning an empty list. Returns [lines, error].
+function! db_ui#schemas#query_with_error(db, scheme, query) abort
+  let [cmd, input] = s:format_query(a:db, a:scheme, a:query)
+  " Join to a shell command string: some supported Vim builds do not accept
+  " list arguments to system()/systemlist().
+  let cmdstring = join(map(copy(cmd), 'db#shellescape(v:val)'), ' ')
+  try
+    if empty(input)
+      let output = system(cmdstring . ' </dev/null')
+    else
+      let output = system(cmdstring, input)
+    endif
+    if v:shell_error
+      return [[], 'DB exec error (exit '.v:shell_error.')']
+    endif
+    let result = split(output, "\n", 1)
+    " db#systemlist (used by db_ui#schemas#query) drops one trailing empty
+    " line through its job callback; mimic that so both paths parse the same.
+    if !empty(result) && result[-1] ==# ''
+      call remove(result, -1)
+    endif
+    return [map(result, {_, val -> substitute(val, "\r$", "", "")}), '']
+  catch /.*/
+    return [[], v:exception]
+  endtry
+endfunction
+
 function db_ui#schemas#supports_schemes(scheme, parsed_url)
   let schema_support = !empty(get(a:scheme, 'schemes_query', 0))
   if empty(schema_support)
@@ -284,4 +315,23 @@ function db_ui#schemas#supports_schemes(scheme, parsed_url)
   endif
 
   return 1
+endfunction
+
+" A connection gets a database tree level only when the adapter knows how to
+" enumerate databases (db#adapter#supports(conn, 'databases')) and this plugin
+" knows how to introspect each one (per-database queries in the scheme dict).
+function! db_ui#schemas#supports_databases(scheme, url) abort
+  if empty(get(a:scheme, 'database_schemas_query', '')) || empty(get(a:scheme, 'database_tables_query', ''))
+    return 0
+  endif
+  try
+    return db#adapter#supports(a:url, 'databases')
+  catch /.*/
+    return 0
+  endtry
+endfunction
+
+" Quote a SQL Server database name for use in a three-part name.
+function! db_ui#schemas#quote_database(name) abort
+  return '[' . substitute(a:name, ']', ']]', 'g') . ']'
 endfunction
