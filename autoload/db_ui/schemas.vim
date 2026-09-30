@@ -274,27 +274,47 @@ function! db_ui#schemas#query(db, scheme, query) abort
   return map(result, {_, val -> substitute(val, "\r$", "", "")})
 endfunction
 
+function! s:error_hint(output, exit_status) abort
+  let lines = filter(map(split(a:output, "\n", 1), {_, v -> trim(v)}), '!empty(v:val)')
+  for line in lines
+    if line =~? '^Msg \d\+\|^Sqlcmd:\|error'
+      return 'DB exec error: ' . strcharpart(line, 0, 120)
+    endif
+  endfor
+  if empty(lines)
+    return 'DB exec error (exit '.a:exit_status.')'
+  endif
+  return 'DB exec error: ' . strcharpart(lines[0], 0, 120)
+endfunction
+
 " Like db_ui#schemas#query, but surfaces execution failures instead of
 " silently returning an empty list. Returns [lines, error].
 function! db_ui#schemas#query_with_error(db, scheme, query) abort
   let [cmd, input] = s:format_query(a:db, a:scheme, a:query)
   " Join to a shell command string: some supported Vim builds do not accept
-  " list arguments to system()/systemlist().
+  " list arguments to system()/systemlist(). Merge stderr into the output -
+  " sqlcmd reports connection and permission failures there, sometimes with
+  " a zero exit status.
   let cmdstring = join(map(copy(cmd), 'db#shellescape(v:val)'), ' ')
   try
     if empty(input)
-      let output = system(cmdstring . ' </dev/null')
+      let output = system(cmdstring . ' </dev/null 2>&1')
     else
-      let output = system(cmdstring, input)
+      let output = system(cmdstring . ' 2>&1', input)
     endif
     if v:shell_error
-      return [[], 'DB exec error (exit '.v:shell_error.')']
+      return [[], s:error_hint(output, v:shell_error)]
     endif
     let result = split(output, "\n", 1)
     " db#systemlist (used by db_ui#schemas#query) drops one trailing empty
     " line through its job callback; mimic that so both paths parse the same.
     if !empty(result) && result[-1] ==# ''
       call remove(result, -1)
+    endif
+    " Catch tools that exit 0 while printing only an error (stdout empty).
+    let nonempty = filter(copy(result), '!empty(v:val)')
+    if !empty(nonempty) && nonempty[0] =~? '^Sqlcmd:\s*Error\|^Msg \d\+'
+      return [[], s:error_hint(output, 0)]
     endif
     return [map(result, {_, val -> substitute(val, "\r$", "", "")}), '']
   catch /.*/

@@ -131,7 +131,7 @@ function! s:suite.should_show_error_hint_for_unreadable_database() abort
   call s:expect(getline(5, '$')).to_equal([
         \ '    ▸ OtherDb',
         \ '    ▾ BadDb ✕',
-        \ '      (DB exec error (exit 1))',
+        \ '      (DB exec error: Msg 916, Level 14, State 1, Server mock, Line 1)',
         \ '    ▸ System Databases (1)',
         \ ])
 endfunction
@@ -197,7 +197,22 @@ function! s:suite.should_show_error_when_enumeration_fails() abort
   normal o
   call s:expect(getline(4, '$')).to_equal([
         \ '  ▾ Databases (0) ✕',
-        \ '    (DB exec error (exit 1))',
+        \ '    (DB exec error: Sqlcmd: Error: connection failed)',
+        \ ])
+endfunction
+
+function! s:suite.should_show_error_when_enumeration_fails_silently() abort
+  " Mock server "silent": error goes to stderr but sqlcmd exits 0, stdout is
+  " empty - previously rendered as a bare Databases (0) with no hint.
+  call s:begin('sqlserver://sa:pass@silent:1433')
+  :DBUI
+  normal o
+  call s:expect(getline(4)).to_equal('  ▸ Databases (0) ✕')
+  call cursor(4, 1)
+  normal o
+  call s:expect(getline(4, '$')).to_equal([
+        \ '  ▾ Databases (0) ✕',
+        \ '    (DB exec error: Sqlcmd: Error: The certificate chain was not issued by a trusted authority.)',
         \ ])
 endfunction
 

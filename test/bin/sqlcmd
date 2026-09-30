@@ -27,13 +27,20 @@ fi
 case "$QUERY" in
   *"FROM sys.databases"*)
     # Adapter database enumeration (runs with SET NOCOUNT ON).
-    # Server "broken" simulates a failed query (TLS / default-db problems):
-    # the connect probe passes, but enumeration exits nonzero.
-    case "$SERVER" in broken*) BROKEN=1;; esac
-    if [ "$BROKEN" = "1" ]; then
-      printf 'Sqlcmd: Error: connection failed\n' >&2
-      exit 1
-    fi
+    # "broken*": query fails with a nonzero exit (TLS / default-db problems).
+    # "silent*": reports the error on stderr but exits 0 with empty stdout -
+    # the failure shape some sqlcmd builds produce, where the connect probe
+    # passes and the drawer would otherwise show Databases (0) silently.
+    case "$SERVER" in
+      broken*)
+        printf 'Sqlcmd: Error: connection failed\n' >&2
+        exit 1
+        ;;
+      silent*)
+        printf 'Sqlcmd: Error: The certificate chain was not issued by a trusted authority.\n' >&2
+        exit 0
+        ;;
+    esac
     printf 'master\nOtherDb\nBadDb\n'
     exit 0
     ;;
