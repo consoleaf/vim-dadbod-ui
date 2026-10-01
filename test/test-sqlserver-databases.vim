@@ -216,6 +216,23 @@ function! s:suite.should_show_error_when_enumeration_fails_silently() abort
         \ ])
 endfunction
 
+function! s:suite.should_pass_trust_flag_from_url_param() abort
+  " The trustServerCertificate URL param (any casing, trailing ';' tolerated)
+  " must reach every sqlcmd invocation as -C. Mock server "tls*" refuses
+  " connections without it.
+  call s:begin('sqlserver://sa:pass@tls1:1433?TrustServerCertificate=yes;')
+  :DBUI
+  normal o
+  call s:expect(getline(4)).to_equal('  ▸ Databases (2)')
+endfunction
+
+function! s:suite.should_fail_tls_enumeration_without_trust_param() abort
+  call s:begin('sqlserver://sa:pass@tls1:1433')
+  :DBUI
+  normal o
+  call s:expect(getline(4)).to_equal('  ▸ Databases (0) ✕')
+endfunction
+
 function! s:suite.should_fall_back_to_schemas_when_adapter_lacks_databases() abort
   " Simulate an older vim-dadbod without the databases() capability.
   silent! delfunction db#adapter#sqlserver#databases

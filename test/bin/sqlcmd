@@ -9,6 +9,7 @@ QUERY=""
 INPUT=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    -C) TRUSTED=1 ;;
     -S|-U|-P|-d|-Q|-i|-s) OPT="$1"; shift; case "$OPT" in
       -S) SERVER="$1" ;;
       -d) DB="$1" ;;
@@ -27,6 +28,15 @@ fi
 case "$QUERY" in
   *"FROM sys.databases"*)
     # Adapter database enumeration (runs with SET NOCOUNT ON).
+    # Server "tls*" demands -C (trustServerCertificate URL param).
+    case "$SERVER" in
+      tls*)
+        if [ "$TRUSTED" != "1" ]; then
+          printf 'Sqlcmd: Error: The certificate chain was not issued by a trusted authority.\n' >&2
+          exit 1
+        fi
+        ;;
+    esac
     # "broken*": query fails with a nonzero exit (TLS / default-db problems).
     # "silent*": reports the error on stderr but exits 0 with empty stdout -
     # the failure shape some sqlcmd builds produce, where the connect probe
