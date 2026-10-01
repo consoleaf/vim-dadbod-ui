@@ -1,3 +1,4 @@
+# CI matrix: Vim/Neovim x stable/nightly on Linux/Windows/macOS (themis).
 name: tests
 
 on:
