@@ -1,6 +1,14 @@
 let s:drawer_instance = {}
 let s:drawer = {}
 
+" Databases SQL Server groups into a "System Databases" folder,
+" like SSMS and Azure Data Studio do.
+let s:system_databases = ['master', 'model', 'msdb', 'tempdb']
+
+function! s:is_system_database(name) abort
+  return index(s:system_databases, a:name) >= 0
+endfunction
+
 function db_ui#drawer#new(dbui)
   let s:drawer_instance = s:drawer.new(a:dbui)
   return s:drawer_instance
@@ -438,20 +446,21 @@ function! s:drawer.add_db(db) abort
   endfor
 endfunction
 
-function! s:drawer.render_tables(tables, db, path, level, schema) abort
+function! s:drawer.render_tables(tables, db, path, level, schema, ...) abort
   if !a:tables.expanded
     return
   endif
+  let extra = get(a:, 1, {})
   if type(g:Db_ui_table_name_sorter) ==? type(function('tr'))
     let tables_list = call(g:Db_ui_table_name_sorter, [a:tables.list])
   else
     let tables_list = a:tables.list
   endif
   for table in tables_list
-    call self.add(table, 'toggle', a:path.'->'.table, self.get_toggle_icon('table', a:tables.items[table]), a:db.key_name, a:level, { 'expanded': a:tables.items[table].expanded })
+    call self.add(table, 'toggle', a:path.'->'.table, self.get_toggle_icon('table', a:tables.items[table]), a:db.key_name, a:level, extend({ 'expanded': a:tables.items[table].expanded }, extra))
     if a:tables.items[table].expanded
       for [helper_name, helper] in items(a:db.table_helpers)
-        call self.add(helper_name, 'open', 'table', g:db_ui_icons.tables, a:db.key_name, a:level + 1, {'table': table, 'content': helper, 'schema': a:schema })
+        call self.add(helper_name, 'open', 'table', g:db_ui_icons.tables, a:db.key_name, a:level + 1, extend({'table': table, 'content': helper, 'schema': a:schema }, extra))
       endfor
     endif
   endfor
@@ -485,6 +494,10 @@ function! s:drawer.toggle_line(edit_action) abort
   endif
 
   let tree.expanded = !tree.expanded
+
+  if !empty(get(item, 'database', '')) && tree.expanded && !get(tree, 'loaded', 1)
+    call self.populate_database(db, item.database)
+  endif
 
   if item.type ==? 'db'
     call self.toggle_db(db)
@@ -573,6 +586,9 @@ function! s:drawer.populate(db) abort
   if empty(a:db.conn) && a:db.conn_tried
     call self.dbui.connect(a:db)
   endif
+  if a:db.database_support
+    return self.populate_databases(a:db)
+  endif
   if a:db.schema_support
     return self.populate_schemas(a:db)
   endif
@@ -629,17 +645,11 @@ function! s:drawer.populate_schemas(db) abort
   let scheme = db_ui#schemas#get(a:db.scheme)
   let schemas = scheme.parse_results(db_ui#schemas#query(a:db, scheme, scheme.schemes_query), 1)
   let tables = scheme.parse_results(db_ui#schemas#query(a:db, scheme, scheme.schemes_tables_query), 2)
-  let schemas = filter(schemas, {i, v -> !self._is_schema_ignored(v)})
-  let tables_by_schema = {}
+  let [schemas, tables_by_schema] = self.group_tables_by_schema(schemas, tables)
   for [scheme_name, table] in tables
-    if self._is_schema_ignored(scheme_name)
-      continue
+    if !self._is_schema_ignored(scheme_name)
+      call add(a:db.tables.list, table)
     endif
-    if !has_key(tables_by_schema, scheme_name)
-      let tables_by_schema[scheme_name] = []
-    endif
-    call add(tables_by_schema[scheme_name], table)
-    call add(a:db.tables.list, table)
   endfor
   let a:db.schemas.list = schemas
   for schema in schemas
@@ -660,12 +670,122 @@ function! s:drawer.populate_schemas(db) abort
   return a:db
 endfunction
 
+" Filter ignored schemas out of both lists and group table rows by schema.
+" Shared between the schema-level and database-level tree population.
+function! s:drawer.group_tables_by_schema(schemas, tables) abort
+  let schemas = filter(copy(a:schemas), {i, v -> !self._is_schema_ignored(v)})
+  let tables_by_schema = {}
+  for [scheme_name, table] in a:tables
+    if self._is_schema_ignored(scheme_name)
+      continue
+    endif
+    if !has_key(tables_by_schema, scheme_name)
+      let tables_by_schema[scheme_name] = []
+    endif
+    call add(tables_by_schema[scheme_name], table)
+  endfor
+  return [schemas, tables_by_schema]
+endfunction
+
+" Enumerate all databases on the server (one query), and remember which one
+" the connection URL itself points at so it can be marked in the tree.
+function! s:drawer.populate_databases(db) abort
+  let a:db.databases.list = []
+  if empty(a:db.conn)
+    return a:db
+  endif
+  try
+    let databases = db#adapter#dispatch(a:db.conn, 'databases')
+  catch /.*/
+    let databases = []
+  endtry
+  let a:db.databases.error = ''
+  if empty(databases)
+    " An instance always has at least master and tempdb online, so an empty
+    " result means the query itself failed (db#systemlist swallows the exit
+    " status). Re-run it with error capture so the drawer can show why.
+    let scheme = db_ui#schemas#get(a:db.scheme)
+    let [_, error] = db_ui#schemas#query_with_error(a:db, scheme,
+          \ "SET NOCOUNT ON; SELECT name FROM sys.databases WHERE state_desc = 'ONLINE' ORDER BY name")
+    if !empty(error)
+      let a:db.databases.error = error
+    endif
+  endif
+  let a:db.databases.list = filter(copy(databases), '!empty(v:val)')
+
+  let current = substitute(get(db#url#parse(a:db.conn), 'path', ''), '^/', '', '')
+  if empty(current)
+    let scheme = db_ui#schemas#get(a:db.scheme)
+    " Through the bounded job runner like every other tree query.
+    let [names, error] = db_ui#schemas#query_with_error(a:db, scheme,
+          \ get(scheme, 'database_current_query', 'SELECT DB_NAME()'))
+    if empty(error)
+      let current = get(scheme.parse_results(names, 1), 0, '')
+    endif
+  endif
+  let a:db.current_database = current
+
+  for database in a:db.databases.list
+    if !has_key(a:db.databases.items, database)
+      let a:db.databases.items[database] = {
+            \ 'expanded': 0,
+            \ 'loaded': 0,
+            \ 'error': '',
+            \ 'current': 0,
+            \ 'schemas': { 'expanded': 0, 'items': {}, 'list': [] },
+            \ }
+    endif
+    let a:db.databases.items[database].current = database ==? current ? 1 : 0
+  endfor
+  return a:db
+endfunction
+
+" Introspect a single database on first expansion, using three-part names
+" against the existing connection. On failure the database node gets an
+" error hint and the rest of the tree stays intact.
+function! s:drawer.populate_database(db, name) abort
+  let item = get(a:db.databases.items, a:name, {})
+  if empty(item) || item.loaded
+    return item
+  endif
+  let scheme = db_ui#schemas#get(a:db.scheme)
+  let quoted = db_ui#schemas#quote_database(a:name)
+  let [schemas_result, schemas_error] = db_ui#schemas#query_with_error(a:db, scheme,
+        \ printf(scheme.database_schemas_query, quoted))
+  let [tables_result, tables_error] = db_ui#schemas#query_with_error(a:db, scheme,
+        \ printf(scheme.database_tables_query, quoted))
+  let item.loaded = 1
+  if !empty(schemas_error) || !empty(tables_error)
+    let item.error = !empty(schemas_error) ? schemas_error : tables_error
+    return item
+  endif
+  let schemas = scheme.parse_results(schemas_result, 1)
+  let tables = scheme.parse_results(tables_result, 2)
+  let [schemas, tables_by_schema] = self.group_tables_by_schema(schemas, tables)
+  let item.schemas.list = schemas
+  for schema in schemas
+    if !has_key(item.schemas.items, schema)
+      let item.schemas.items[schema] = {
+            \ 'expanded': 0,
+            \ 'tables': {
+            \   'expanded': 1,
+            \   'list': [],
+            \   'items': {},
+            \ },
+            \ }
+    endif
+    let item.schemas.items[schema].tables.list = sort(get(tables_by_schema, schema, []))
+    call self.populate_table_items(item.schemas.items[schema].tables)
+  endfor
+  return item
+endfunction
+
 function! s:drawer.get_toggle_icon(type, item) abort
   if a:item.expanded
-    return g:db_ui_icons.expanded[a:type]
+    return get(g:db_ui_icons.expanded, a:type, g:db_ui_icons.expanded.schema)
   endif
 
-  return g:db_ui_icons.collapsed[a:type]
+  return get(g:db_ui_icons.collapsed, a:type, g:db_ui_icons.collapsed.schema)
 endfunction
 
 function! s:drawer.get_nested(obj, val, ...) abort
@@ -726,6 +846,9 @@ function! s:drawer._render_saved_queries_section(db) abort
 endfunction
 
 function! s:drawer._render_schemas_section(db) abort
+  if a:db.database_support
+    return self._render_databases_section(a:db)
+  endif
   if a:db.schema_support
     call self.add('Schemas ('.len(a:db.schemas.items).')', 'toggle', 'schemas', self.get_toggle_icon('schemas', a:db.schemas), a:db.key_name, 1, { 'expanded': a:db.schemas.expanded })
     if a:db.schemas.expanded
@@ -741,6 +864,57 @@ function! s:drawer._render_schemas_section(db) abort
   else
     call self.add('Tables ('.len(a:db.tables.items).')', 'toggle', 'tables', self.get_toggle_icon('tables', a:db.tables), a:db.key_name, 1, { 'expanded': a:db.tables.expanded })
     call self.render_tables(a:db.tables, a:db, 'tables->items', 2, '')
+  endif
+endfunction
+
+function! s:drawer._render_databases_section(db) abort
+  let user_databases = filter(copy(a:db.databases.list), {_, v -> !s:is_system_database(v)})
+  let system_databases = filter(copy(a:db.databases.list), {_, v -> s:is_system_database(v)})
+  let label = 'Databases ('.len(user_databases).')'
+  if !empty(get(a:db.databases, 'error', ''))
+    let label .= ' '.g:db_ui_icons.connection_error
+  endif
+  call self.add(label, 'toggle', 'databases', self.get_toggle_icon('schemas', a:db.databases), a:db.key_name, 1, { 'expanded': a:db.databases.expanded })
+  if !a:db.databases.expanded
+    return
+  endif
+  if !empty(get(a:db.databases, 'error', ''))
+    call self.add('('.a:db.databases.error.')', 'noaction', 'database_error', '', a:db.key_name, 2)
+  endif
+  for database in user_databases
+    call self._render_database_node(a:db, database, 2)
+  endfor
+  if !empty(system_databases)
+    call self.add('System Databases ('.len(system_databases).')', 'toggle', 'databases->system', self.get_toggle_icon('schemas', a:db.databases.system), a:db.key_name, 2, { 'expanded': a:db.databases.system.expanded })
+    if a:db.databases.system.expanded
+      for database in system_databases
+        call self._render_database_node(a:db, database, 3)
+      endfor
+    endif
+  endif
+endfunction
+
+function! s:drawer._render_database_node(db, database, level) abort
+  let item = a:db.databases.items[a:database]
+  let label = a:database . (item.current ? ' *' : '')
+  if !empty(item.error)
+    let label .= ' '.g:db_ui_icons.connection_error
+  endif
+  call self.add(label, 'toggle', 'databases->items->'.a:database, self.get_toggle_icon('database', item), a:db.key_name, a:level, { 'expanded': item.expanded, 'database': a:database })
+  if !item.expanded
+    return
+  endif
+  if !empty(item.error)
+    call self.add('('.item.error.')', 'noaction', 'database_error', '', a:db.key_name, a:level + 1)
+  elseif item.loaded
+    for schema in item.schemas.list
+      let schema_item = item.schemas.items[schema]
+      let tables = schema_item.tables
+      call self.add(schema.' ('.len(tables.items).')', 'toggle', 'databases->items->'.a:database.'->schemas->items->'.schema, self.get_toggle_icon('schema', schema_item), a:db.key_name, a:level + 1, { 'expanded': schema_item.expanded, 'database': a:database })
+      if schema_item.expanded
+        call self.render_tables(tables, a:db, 'databases->items->'.a:database.'->schemas->items->'.schema.'->tables->items', a:level + 2, schema, { 'database': a:database })
+      endif
+    endfor
   endif
 endfunction
 

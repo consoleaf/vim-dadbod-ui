@@ -949,6 +949,48 @@ db_ui#statusline({opts})
 		  \ 'prefix': ''
 		  \ })
 <
+		When a query buffer is opened from a SQL Server database subtree (see
+		|vim-dadbod-ui-sqlserver-databases|), the `database` token is also
+		available in `show` to display the target database.
+
+==============================================================================
+11. SQL Server database tree		  *vim-dadbod-ui-sqlserver-databases*
+
+For `sqlserver://` connections, when the installed vim-dadbod adapter supports
+the `databases()` capability, the drawer shows all online databases on the
+server as a level above schemas: ~
+
+		connection -> Databases -> [database *] -> schemas -> tables
+
+		* `master`, `model`, `msdb` and `tempdb` are grouped into a
+		  `System Databases (4)` folder below the user databases, like
+		  SSMS and Azure Data Studio. System databases expand and query
+		  exactly like user databases.
+		* The database the connection URL points at is marked with `*`
+		  (or the login's default database when the URL has no database
+		  segment).
+		* Database enumeration runs once, when the connection node is
+		  first expanded. Each database is introspected lazily on first
+		  expansion, using three-part names against the existing
+		  connection (`[Db].INFORMATION_SCHEMA.TABLES`).
+		* Query buffers opened from a database subtree target that
+		  database (`b:dbui_database_name` is set, `{optional_schema}`
+		  helpers are prefixed with the bracket-quoted database).
+		* Databases that cannot be introspected (for example due to
+		  permissions) show an error hint instead of tables; the rest of
+		  the tree is unaffected.
+		* The queries the drawer runs for `sqlserver://` connections
+		  (database enumeration, the per-database introspection, the
+		  `DB_NAME()` probe) execute as jobs whose stdout and stderr go
+		  to temp files, with a bounded wait: after
+		  `g:db_ui_query_timeout` seconds (default 10) the process is
+		  killed and the tree shows a timeout error instead of hanging
+		  until the TCP connect timeout. vim-dadbod bounds its side the
+		  same way (`g:db_adapter_sqlserver_query_timeout` for database
+		  enumeration, `g:db_connect_timeout` for the connection probe).
+		* With an older vim-dadbod that lacks the capability, the drawer
+		  renders the previous single-database schema tree. Other
+		  adapters are not affected.
 
 					      *db_ui#query()*
 db_ui#query({query})
@@ -1006,7 +1048,7 @@ DBUIOpened
 		`autocmd User DBUIOpened let b:dotenv = DotenvRead('.envrc') | norm R`
 
 ==============================================================================
-11. Highlights					*vim-dadbod-ui-highlights*
+12. Highlights					*vim-dadbod-ui-highlights*
 
 To customize the colors of the notifications, add these custom hl groups:
 * `NotificationInfo`

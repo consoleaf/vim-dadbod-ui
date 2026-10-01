@@ -310,6 +310,46 @@ This option must be disabled (set to 0) for Redshift.
 let g:db_ui_use_postgres_views = 0
 ```
 
+## SQL Server: browsing all databases
+
+For `sqlserver://` connections, vim-dadbod-ui can render every database on the
+instance as an extra level in the drawer:
+
+```
+▾ my_server ✓
+  + New query
+  ▸ Saved queries (0)
+  ▸ Databases (4)
+```
+
+```
+  ▸ Databases (2)
+    ▸ OtherDb
+    ▸ SecondDb *
+    ▸ System Databases (4)
+      ▸ master
+      ▸ model
+      ▸ msdb
+      ▸ tempdb
+```
+
+`master`, `model`, `msdb` and `tempdb` are grouped into a `System Databases`
+folder, like SSMS and Azure Data Studio. Expanding any database lists its
+schemas and tables. The database the connection URL itself points at is marked
+with `*`; if the URL has no database segment, the server reports the login's
+default database, which is marked instead.
+Per-database introspection runs lazily (on first expansion) and reuses the
+existing connection with three-part names (`[OtherDb].INFORMATION_SCHEMA.TABLES`),
+so no extra connections are opened. Opening a table under a database opens a
+query buffer whose connection targets that database, so `{table}` helpers and
+execution run against it (names are qualified as `[Db].[Schema].[Table]`).
+
+This requires vim-dadbod's `sqlserver` adapter to implement the `databases()`
+capability; with an older vim-dadbod the drawer falls back to the previous
+single-database schema tree. Databases you cannot introspect (for example due
+to permissions) are marked with `✕` and an error hint, without affecting the
+rest of the tree.
+
 ## Disable builtin progress bar
 If you want to utilize *DBExecutePre or *DBExecutePost to make your own progress bar
 or if you want to disable the progress entirely set to 1.
