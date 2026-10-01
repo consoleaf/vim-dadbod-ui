@@ -287,34 +287,120 @@ function! s:error_hint(output, exit_status) abort
   return 'DB exec error: ' . strcharpart(lines[0], 0, 120)
 endfunction
 
+" Exit statuses arrive through job callbacks; store them per job id so a
+" late callback from a previously killed job cannot be read as this job's.
+let s:job_exits = {}
+
+function! s:job_exit_cb(job, status, ...) abort
+  let s:job_exits[string(a:job)] = a:status
+endfunction
+
+function! s:tempfile_text(file) abort
+  return filereadable(a:file) ? join(readfile(a:file), "\n") . "\n" : ''
+endfunction
+
+" Run a shell command line as a job whose shell redirects stdout and stderr
+" to temp files (sqlcmd reports connection and permission failures on
+" stderr, sometimes with a zero exit status). Waits at most a:timeout
+" seconds, then kills the job - system() offers no such escape hatch, so an
+" unreachable endpoint would otherwise stall expansion for the OS TCP
+" connect timeout. Returns [finished, exit_status, stdout, stderr];
+" exit_status is -1 when the job was killed or its status never arrived.
+function! s:run_with_timeout(cmdstring, input, timeout) abort
+  let outfile = tempname()
+  let errfile = tempname()
+  let redirect = ' >' . outfile . ' 2>' . errfile
+  let infile = ''
+  if empty(a:input)
+    let redirect .= ' </dev/null'
+  else
+    let infile = tempname()
+    call writefile(split(a:input, "\n", 1), infile, 'b')
+    let redirect .= ' <' . infile
+  endif
+  let finished = 0
+  let job = 0
+  try
+    if has('nvim')
+      let job = jobstart([&shell, &shellcmdflag, a:cmdstring . redirect],
+            \ {'on_exit': function('s:job_exit_cb')})
+      let finished = jobwait([job], a:timeout * 1000)[0] != -1
+      if !finished
+        call jobstop(job)
+      endif
+    elseif exists('*job_start')
+      " job_start(String) runs argv directly without a shell on some Vim
+      " builds - pass the shell explicitly so the redirections apply.
+      let job = job_start([&shell, &shellcmdflag, a:cmdstring . redirect],
+            \ {'in_io': 'null', 'exit_cb': function('s:job_exit_cb')})
+      if job_status(job) ==# 'fail'
+        throw 'DB: failed to start job'
+      endif
+      let deadline = reltimefloat(reltime()) + a:timeout
+      while job_status(job) ==# 'run' && reltimefloat(reltime()) < deadline
+        sleep 10m
+      endwhile
+      let finished = job_status(job) !=# 'run'
+      if !finished
+        call job_stop(job, 'kill')
+      endif
+    else
+      throw 'DB: jobs not supported by this Vim version'
+    endif
+    if !finished
+      return [0, -1, '', '']
+    endif
+    let status = get(s:job_exits, string(job), -1)
+    if has_key(s:job_exits, string(job))
+      call remove(s:job_exits, string(job))
+    endif
+    return [1, status, s:tempfile_text(outfile), s:tempfile_text(errfile)]
+  finally
+    for path in [outfile, errfile, infile]
+      if !empty(path)
+        call delete(path)
+      endif
+    endfor
+  endtry
+endfunction
+
 " Like db_ui#schemas#query, but surfaces execution failures instead of
-" silently returning an empty list. Returns [lines, error].
+" silently returning an empty list. Returns [lines, error]. Runs through a
+" job with a wait timeout (g:db_ui_query_timeout, default 10 seconds) so a
+" hung sqlcmd is killed instead of stalling tree expansion.
 function! db_ui#schemas#query_with_error(db, scheme, query) abort
   let [cmd, input] = s:format_query(a:db, a:scheme, a:query)
   " Join to a shell command string: some supported Vim builds do not accept
-  " list arguments to system()/systemlist(). Merge stderr into the output -
-  " sqlcmd reports connection and permission failures there, sometimes with
-  " a zero exit status.
+  " list arguments to system()/systemlist(), and the shell performs the
+  " stdout/stderr redirections for the job on every supported platform.
   let cmdstring = join(map(copy(cmd), 'db#shellescape(v:val)'), ' ')
+  let timeout = get(g:, 'db_ui_query_timeout', 10)
   try
-    if empty(input)
-      let output = system(cmdstring . ' </dev/null 2>&1')
-    else
-      let output = system(cmdstring . ' 2>&1', input)
+    let [finished, status, out, err] = s:run_with_timeout(cmdstring, input, timeout)
+    if !finished
+      return [[], 'DB exec error: timed out after '.timeout.'s (query killed)']
     endif
-    if v:shell_error
-      return [[], s:error_hint(output, v:shell_error)]
+    " Hints look at stderr first (sqlcmd reports failures there), then
+    " stdout - like the previously merged 2>&1 output did.
+    let output = err . "\n" . out
+    if status
+      return [[], s:error_hint(output, status)]
     endif
-    let result = split(output, "\n", 1)
+    let result = split(out, "\n", 1)
     " db#systemlist (used by db_ui#schemas#query) drops one trailing empty
     " line through its job callback; mimic that so both paths parse the same.
     if !empty(result) && result[-1] ==# ''
       call remove(result, -1)
     endif
-    " Catch tools that exit 0 while printing only an error (stdout empty).
+    " Catch tools that exit 0 while printing only an error: on stderr
+    " (whatever stdout says) or as the first non-empty stdout line.
+    let errlines = filter(map(split(err, "\n", 1), {_, v -> trim(v)}), '!empty(v:val)')
+    if !empty(errlines) && errlines[0] =~? '^Sqlcmd:\s*Error\|^Msg \d\+'
+      return [[], s:error_hint(err, 0)]
+    endif
     let nonempty = filter(copy(result), '!empty(v:val)')
     if !empty(nonempty) && nonempty[0] =~? '^Sqlcmd:\s*Error\|^Msg \d\+'
-      return [[], s:error_hint(output, 0)]
+      return [[], s:error_hint(out, 0)]
     endif
     return [map(result, {_, val -> substitute(val, "\r$", "", "")}), '']
   catch /.*/

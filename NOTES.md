@@ -122,11 +122,13 @@ to the `schema` icon in `get_toggle_icon()`, so users with custom partial
 
 ## Verification summary
 
-* 9 new themis tests (`test/test-sqlserver-databases.vim`) with a mock sqlcmd:
+* 12 new themis tests (`test/test-sqlserver-databases.vim`) with a mock sqlcmd:
   section rendering, current-db marking (with and without URL segment), lazy
   schema/table expansion, error hint, query-buffer targeting + content,
-  old-dadbod fallback, capability gating for other schemes.
-* Full suite: 63/63 in Vim 9.1 **and** Neovim 0.9.5 (zero regression).
+  old-dadbod fallback, capability gating for other schemes, job-runner
+  invocation audit, and bounded-wait behavior (single hung query killed at
+  the deadline; hung enumeration fails the whole expansion fast).
+* Full suite: 71/71 in Vim 9.1 **and** Neovim (zero regression).
 * Real SQL Server 2022 smoke test in Docker: see the report.
 
 ## System databases grouping
@@ -139,6 +141,48 @@ in `db.databases.system.expanded`, database nodes keep their normal
 marker and query targeting behave identically inside the folder. The
 `Databases (N)` header counts user databases only. No configuration flag:
 the four-name set matches SSMS's fixed notion of system databases.
+
+## Bounded synchronous queries (freeze guard)
+
+Tree expansion runs sqlcmd synchronously, and sqlcmd blocks for the OS TCP
+connect timeout when the endpoint is unreachable — expanding a connection to
+a dead/firewalled server froze the UI for minutes. (This was NOT the LazyVim
+quit hang, which was kulala.nvim#1033.)
+
+Chosen fix: keep the synchronous expand flow, but run every sqlserver query
+as a job with stderr captured to a temp file and a bounded wait that kills
+the process on overrun. The editor still blocks while the query runs, but
+never past the timeout, and the process cannot linger: `system()` offers no
+such escape hatch once started, which is why the job route beats a shell-
+level login timeout flag — we get the process back and can say "timed out".
+
+* **vim-dadbod-ui** — `db_ui#schemas#query_with_error()` runs the command
+  through `s:run_with_timeout()`: a job (Neovim `jobstart`, Vim `job_start`;
+  both via `[&shell, &shellcmdflag, cmd]` — `job_start(String)` bypasses the
+  shell, so the redirections would never apply) redirects stdout and stderr
+  to temp files, `jobwait()`/deadline-poll enforces
+  `g:db_ui_query_timeout` (default 10), and the job is stopped/killed on
+  overrun. `s:error_hint()` is unchanged; hints read stderr first, then
+  stdout — the same precedence the previous merged `2>&1` output produced.
+  The drawer's `DB_NAME()` probe moved from `db_ui#schemas#query()` to
+  `query_with_error()` so it is bounded too (a dead endpoint would
+  otherwise hang exactly there, after enumeration had already failed).
+* **vim-dadbod** — `s:job_wait()` takes an optional timeout and stops the
+  job when it expires; `db#systemlist(cmd, [input, [timeout]])` passes it
+  through (default: wait forever, unchanged for existing callers).
+  `databases()` bounds itself with `g:db_adapter_sqlserver_query_timeout`
+  and `db#connect()`'s auth probe with `g:db_connect_timeout` (both default
+  10). The probe runs on every connection open (`db_ui` `s:dbui.connect`),
+  so leaving it unbounded would have moved the freeze there instead.
+
+Job exit statuses are stored per job id (`string(job)` keys), so a callback
+arriving late from a killed job can never be read as the current job's.
+Timeouts surface as `DB exec error: timed out after Ns ...`, matching the
+existing `DB exec error: ...` hint shape the drawer already renders.
+
+The interactive `:DB` sqlcmd session is deliberately untouched: a slow
+login inside the user-facing terminal buffer is sqlcmd's own UX, not an
+editor freeze.
 
 ## Known gaps / future work
 

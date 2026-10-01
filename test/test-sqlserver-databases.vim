@@ -233,6 +233,63 @@ function! s:suite.should_fail_tls_enumeration_without_trust_param() abort
   call s:expect(getline(4)).to_equal('  ▸ Databases (0) ✕')
 endfunction
 
+function! s:suite.should_run_tree_queries_as_bounded_jobs() abort
+  " The drawer's queries run through the bounded job runner; the mock must
+  " see the same invocations as before (probe, enumeration, introspection).
+  call s:begin()
+  let log = tempname()
+  let $SQLCMD_ARGV_LOG = log
+  try
+    :DBUI
+    normal o
+    call cursor(4, 1)
+    normal o
+    " Expand OtherDb so per-database introspection runs as well.
+    call cursor(5, 1)
+    normal o
+    let logged = readfile(log)
+  finally
+    let $SQLCMD_ARGV_LOG = ''
+    call delete(log)
+  endtry
+  call s:expect(len(logged)).to_be_greater_than(2)
+endfunction
+
+function! s:suite.should_time_out_a_single_hung_query() abort
+  call s:begin()
+  let g:db_ui_query_timeout = 1
+  let start = reltime()
+  let [lines, error] = db_ui#schemas#query_with_error(
+        \ {'conn': 'sqlserver://sa:pass@localhost:1433'},
+        \ db_ui#schemas#get('sqlserver'), 'SELECT HANG')
+  let elapsed = reltimefloat(reltime(start))
+  call s:expect(lines).to_equal([])
+  call s:expect(error).to_equal('DB exec error: timed out after 1s (query killed)')
+  " The mock sleeps 30s; an unbounded wait would blow far past this.
+  call s:expect(elapsed).to_be_less_than(10)
+  unlet g:db_ui_query_timeout
+endfunction
+
+function! s:suite.should_fail_fast_when_sqlcmd_hangs() abort
+  " Regression guard for the freeze-on-expand bug: a dead endpoint used to
+  " stall expansion for the OS TCP connect timeout. With 1s budgets the
+  " whole expansion must finish long before the mock's 30s sleep would.
+  call s:begin('sqlserver://sa:pass@slow:1433')
+  let g:db_adapter_sqlserver_query_timeout = 1
+  let g:db_ui_query_timeout = 1
+  let start = reltime()
+  :DBUI
+  normal o
+  let elapsed = reltimefloat(reltime(start))
+  call s:expect(getline(4)).to_equal('  ▸ Databases (0) ✕')
+  call cursor(4, 1)
+  normal o
+  call s:expect(getline(5)).to_equal('    (DB exec error: timed out after 1s (query killed))')
+  call s:expect(elapsed).to_be_less_than(10)
+  unlet g:db_adapter_sqlserver_query_timeout
+  unlet g:db_ui_query_timeout
+endfunction
+
 function! s:suite.should_fall_back_to_schemas_when_adapter_lacks_databases() abort
   " Simulate an older vim-dadbod without the databases() capability.
   silent! delfunction db#adapter#sqlserver#databases

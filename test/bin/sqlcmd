@@ -4,6 +4,12 @@
 #   - parses -S/-U/-P/-d/-Q/-i/-s/-h-1/-W/-N/-C/-E flags
 #   - answers database enumeration, DB_NAME(), INFORMATION_SCHEMA queries
 #   - "BadDb" simulates a database the login cannot introspect (exit 1)
+# Optional argv audit: when SQLCMD_ARGV_LOG names a file, append each
+# invocation's command line (one per line) so tests can assert calls.
+if [ -n "$SQLCMD_ARGV_LOG" ]; then
+  printf '%s\n' "$*" >> "$SQLCMD_ARGV_LOG"
+fi
+
 DB=""
 QUERY=""
 INPUT=""
@@ -20,7 +26,11 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-# Auth probe / execution via stdin file: reply nothing.
+# Auth probe / execution via stdin file: hang when the caller asks for a
+# probe-timeout test (SQLCMD_HANG_PROBE), otherwise reply nothing.
+if [ -n "$SQLCMD_HANG_PROBE" ] && [ -n "$INPUT" ]; then
+  sleep 30
+fi
 if [ -z "$QUERY" ] && [ -n "$INPUT" ]; then
   exit 0
 fi
@@ -41,6 +51,7 @@ case "$QUERY" in
     # "silent*": reports the error on stderr but exits 0 with empty stdout -
     # the failure shape some sqlcmd builds produce, where the connect probe
     # passes and the drawer would otherwise show Databases (0) silently.
+    # "slow*": hangs until the caller kills it (timeout tests).
     case "$SERVER" in
       broken*)
         printf 'Sqlcmd: Error: connection failed\n' >&2
@@ -49,6 +60,9 @@ case "$QUERY" in
       silent*)
         printf 'Sqlcmd: Error: The certificate chain was not issued by a trusted authority.\n' >&2
         exit 0
+        ;;
+      slow*)
+        sleep 30
         ;;
     esac
     printf 'master\nOtherDb\nBadDb\n'
@@ -94,6 +108,10 @@ case "$QUERY" in
     # Adapter tables() against the URL database (old single-database behavior).
     printf 'users\norders\n'
     exit 0
+    ;;
+  *HANG*)
+    # Hangs until the caller kills it (timeout tests).
+    sleep 30
     ;;
   *)
     exit 0

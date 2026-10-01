@@ -716,8 +716,12 @@ function! s:drawer.populate_databases(db) abort
   let current = substitute(get(db#url#parse(a:db.conn), 'path', ''), '^/', '', '')
   if empty(current)
     let scheme = db_ui#schemas#get(a:db.scheme)
-    let current = get(scheme.parse_results(
-          \ db_ui#schemas#query(a:db, scheme, get(scheme, 'database_current_query', 'SELECT DB_NAME()')), 1), 0, '')
+    " Through the bounded job runner like every other tree query.
+    let [names, error] = db_ui#schemas#query_with_error(a:db, scheme,
+          \ get(scheme, 'database_current_query', 'SELECT DB_NAME()'))
+    if empty(error)
+      let current = get(scheme.parse_results(names, 1), 0, '')
+    endif
   endif
   let a:db.current_database = current
 

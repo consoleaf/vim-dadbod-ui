@@ -979,6 +979,15 @@ server as a level above schemas: ~
 		* Databases that cannot be introspected (for example due to
 		  permissions) show an error hint instead of tables; the rest of
 		  the tree is unaffected.
+		* The queries the drawer runs for `sqlserver://` connections
+		  (database enumeration, the per-database introspection, the
+		  `DB_NAME()` probe) execute as jobs whose stdout and stderr go
+		  to temp files, with a bounded wait: after
+		  `g:db_ui_query_timeout` seconds (default 10) the process is
+		  killed and the tree shows a timeout error instead of hanging
+		  until the TCP connect timeout. vim-dadbod bounds its side the
+		  same way (`g:db_adapter_sqlserver_query_timeout` for database
+		  enumeration, `g:db_connect_timeout` for the connection probe).
 		* With an older vim-dadbod that lacks the capability, the drawer
 		  renders the previous single-database schema tree. Other
 		  adapters are not affected.
