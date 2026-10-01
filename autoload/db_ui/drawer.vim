@@ -714,9 +714,11 @@ function! s:drawer.populate_databases(db) abort
   let a:db.databases.list = filter(copy(databases), '!empty(v:val)')
 
   let current = substitute(get(db#url#parse(a:db.conn), 'path', ''), '^/', '', '')
-  if empty(current)
+  if empty(current) && empty(get(a:db.databases, 'error', ''))
     let scheme = db_ui#schemas#get(a:db.scheme)
-    " Through the bounded job runner like every other tree query.
+    " Through the bounded job runner like every other tree query. Skipped
+    " when enumeration already failed: on a half-dead endpoint the probe
+    " would cost another full timeout just for a cosmetic tree marker.
     let [names, error] = db_ui#schemas#query_with_error(a:db, scheme,
           \ get(scheme, 'database_current_query', 'SELECT DB_NAME()'))
     if empty(error)
