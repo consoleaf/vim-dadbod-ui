@@ -60,3 +60,23 @@ function! db_ui#utils#print_debug(msg) abort
 
   echom '[DBUI Debug] '.string(a:msg)
 endfunction
+
+" Return a copy of the connection URL with its database segment replaced,
+" so a query buffer opened under a specific database subtree executes
+" against that database. The rest of the URL (credentials, params) is kept
+" verbatim: vim-dadbod does not URL-decode the database segment, so the raw
+" name is inserted without re-encoding.
+function! db_ui#utils#database_url(url, database) abort
+  let base = matchstr(a:url, '^[^:]\+://.\{-\}/')
+  if !empty(base)
+    let rest = strpart(a:url, len(base))
+    let old_database = matchstr(rest, '[^?#]*')
+    return base . a:database . strpart(rest, len(old_database))
+  endif
+  " No database segment at all: insert one before any params.
+  let prefix = matchstr(a:url, '^[^:]\+://.\{-\}\ze[?#]')
+  if empty(prefix)
+    return a:url . '/' . a:database
+  endif
+  return prefix . '/' . a:database . strpart(a:url, len(prefix))
+endfunction

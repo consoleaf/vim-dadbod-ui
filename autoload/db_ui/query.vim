@@ -33,14 +33,16 @@ function! s:query.open(item, edit_action) abort
   let label = get(a:item, 'label', '')
   let table = ''
   let schema = ''
+  let database = ''
   if a:item.type !=? 'query'
     let suffix = a:item.table.'-'.a:item.label
     let table = a:item.table
     let schema = a:item.schema
+    let database = get(a:item, 'database', '')
   endif
 
-  let buffer_name = self.generate_buffer_name(db, { 'schema': schema, 'table': table, 'label': label, 'filetype': db.filetype })
-  call self.open_buffer(db, buffer_name, a:edit_action, {'table': table, 'content': get(a:item, 'content'), 'schema': schema })
+  let buffer_name = self.generate_buffer_name(db, { 'schema': schema, 'table': table, 'label': label, 'database': database, 'filetype': db.filetype })
+  call self.open_buffer(db, buffer_name, a:edit_action, {'table': table, 'content': get(a:item, 'content'), 'schema': schema, 'database': database })
 endfunction
 
 function! s:query.generate_buffer_name(db, opts) abort
@@ -102,6 +104,7 @@ function s:query.open_buffer(db, buffer_name, edit_action, ...)
   let opts = get(a:, '1', {})
   let table = get(opts, 'table', '')
   let schema = get(opts, 'schema', '')
+  let database = get(opts, 'database', '')
   let default_content = get(opts, 'content', g:db_ui_default_query)
   let was_single_win = winnr('$') ==? 1
 
@@ -131,6 +134,14 @@ function s:query.open_buffer(db, buffer_name, edit_action, ...)
     let optional_schema = optional_schema.'.'
   endif
 
+  if !empty(database)
+    " A two-part [Db].[Table] name would resolve [Db] as a schema inside the
+    " connection's database. With a database context the schema must be
+    " explicit: [Db].dbo.[Table].
+    let schema_part = empty(optional_schema) ? a:db.default_scheme.'.' : optional_schema
+    let optional_schema = db_ui#schemas#quote_database(database).'.'.schema_part
+  endif
+
   let content = substitute(default_content, '{table}', table, 'g')
   let content = substitute(content, '{optional_schema}', optional_schema, 'g')
   let content = substitute(content, '{schema}', schema, 'g')
@@ -153,7 +164,9 @@ function! s:query.setup_buffer(db, opts, buffer_name, was_single_win) abort
   let b:dbui_db_key_name = a:db.key_name
   let b:dbui_table_name = get(a:opts, 'table', '')
   let b:dbui_schema_name = get(a:opts, 'schema', '')
-  let b:db = a:db.conn
+  let database = get(a:opts, 'database', '')
+  let b:dbui_database_name = database
+  let b:db = !empty(database) && !empty(a:db.conn) ? db_ui#utils#database_url(a:db.conn, database) : a:db.conn
   let is_existing_buffer = get(a:opts, 'existing_buffer', 0)
   let is_tmp = self.drawer.dbui.is_tmp_location_buffer(a:db, a:buffer_name)
   let db_buffers = self.drawer.dbui.dbs[a:db.key_name].buffers

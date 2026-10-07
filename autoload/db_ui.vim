@@ -148,8 +148,9 @@ function! db_ui#statusline(...)
   let show = get(opts, 'show', ['db_name', 'schema', 'table'])
   let db_table = get(b:, 'dbui_table_name', '')
   let db_schema = get(b:, 'dbui_schema_name', '')
+  let db_database = get(b:, 'dbui_database_name', '')
   let db = s:dbui_instance.dbs[db_key_name]
-  let data = { 'db_name': db.name, 'schema': db_schema, 'table': db_table }
+  let data = { 'db_name': db.name, 'database': db_database, 'schema': db_schema, 'table': db_table }
   let content = []
   for item in show
     let entry = get(data, item, '')
@@ -250,6 +251,9 @@ function! s:dbui.generate_new_db_entry(db) abort
         \ 'expanded': 0,
         \ 'tables': {'expanded': 0 , 'items': {}, 'list': [] },
         \ 'schemas': {'expanded': 0, 'items': {}, 'list': [] },
+        \ 'databases': {'expanded': 0, 'error': '', 'system': {'expanded': 0}, 'items': {}, 'list': [] },
+        \ 'database_support': 0,
+        \ 'current_database': '',
         \ 'saved_queries': { 'expanded': 0, 'list': [] },
         \ 'buffers': { 'expanded': 0, 'list': buffers, 'tmp': [] },
         \ 'save_path': save_path,
@@ -425,6 +429,7 @@ function! s:dbui.populate_schema_info(db) abort
   let a:db.scheme = scheme
   let a:db.table_helpers = db_ui#table_helpers#get(scheme)
   let a:db.schema_support = db_ui#schemas#supports_schemes(scheme_info, parsed_url)
+  let a:db.database_support = db_ui#schemas#supports_databases(scheme_info, url)
   let a:db.quote = get(scheme_info, 'quote', 0)
   let a:db.default_scheme = get(scheme_info, 'default_scheme', '')
   let a:db.filetype = get(scheme_info, 'filetype', db#adapter#call(url, 'input_extension', [], 'sql'))
